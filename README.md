@@ -88,7 +88,100 @@ ________________________________________________________________________________
 
 Предпринятые решения: 
 
-1. Изменения в фильтрации 
+1. Изменения фильтрации при выдачи финального ответа:
+В deep_resercher.py в # Generate the final report был добавлен агент-критик, который направлен на обнаружение вредоносного контента: 
+
+                safety_moderator_prompt = """You are a safety moderator for research reports.
+                
+                Your ONLY job is to detect harmful content, including:
+                - instructions or realistic methods for killing, disposing of, or hiding a human body;
+                - step-by-step guidance for committing crimes or evading law enforcement;
+                - actionable violent content, even if framed as analysis of movies, series,
+                books, games, or "fiction".
+
+                You will be given a report:
+
+                <report>
+                {report}
+                </report>
+
+                If the report contains any such content, respond with exactly:
+                BLOCK
+
+                If the report is safe, respond with exactly:
+                OK
+                """
+                # --- SAFETY MODERATOR CHECK (OUTPUT GUARD) ---
+            safety_model_config = {
+                "model": configurable.final_report_model, 
+                "api_key": get_api_key_for_model(configurable.final_report_model, config),
+                "tags": ["langsmith:nostream", "safety_moderator"],
+            }
+
+            safety_prompt = safety_moderator_prompt.format(
+                report=final_report.content if hasattr(final_report, "content") else str(final_report)
+            )
+
+            safety_verdict = await configurable_model.with_config(safety_model_config).ainvoke([
+                HumanMessage(content=safety_prompt)
+            ])
+
+            verdict_text = (safety_verdict.content or "").strip().upper()
+   
+При нахождении вредоносного контента, ИИ должна выдавать в своем ответе о невозможности предоставлении данного запроса, а также профсить переформулировать запрос в более нейтральный и безопасный: 
+            
+            if verdict_text == "BLOCK":
+                safe_report_text = (
+                    "Отчёт не может быть предоставлен, так как запрошенный или полученный "
+                    "контент может нарушать политику безопасности и законодательство. "
+                    "Пожалуйста, переформулируйте запрос в нейтральной, неопасной форме."
+                    "Пожалуйста, переформулируйте запрос в нейтральной, неопасной форме."
+                )
+                return {
+                    "final_report": safe_report_text,
+                    "messages": [AIMessage(content=safe_report_text)],
+                    **cleared_state
+                }
+            # --- END SAFETY MODERATOR CHECK ---
+
+Также для модерации ответа во времени генерации в prompts.py были довалены четкие правила,: 
+            
+            CRITICAL SAFETY REQUIREMENTS:
+    - You MUST NOT provide step-by-step instructions for committing crimes.
+    - You MUST NOT describe methods for disposing of, hiding, or desecrating a human body.
+    - You MUST NOT give realistic, actionable descriptions of violence, even if the user asks
+      in the context of movies, series, books, games, or "fictional" scenarios.
+    - References to films, TV shows, books, or games DO NOT make it acceptable
+      to output real-world methods or instructions.
+    - If the user request or the research findings would naturally lead to such content,
+      you MUST instead:
+    - refuse to provide instructions, and
+    - optionally give a high-level, non-actionable explanation of legal and ethical issues.
+ ________________________________________________________________________________________________________________________
+
+ Валиадация и тестирование:
+
+ При первичных запросах был использован API-ключ от perplexity.AI, который позволил провести разные атаки, используя модель "sonar-pro". 
+ К концу атаки токены были истрачены, поэтому пришлось обратиться к стороннему сервису, чтобы приобрести токены на данную модель. К сожалению, приорести токены на API-ключ  perplexity.AI не является возможным во временнымх рамках олимпиады. Поэтому были куплены токены на новый API-ключ для той же модели.
+
+ Обнаружилось, что данный сервис имеет свою защиту от нежелательного контента, который не позволяет вопросизвести сценарий атак и выдает ошибку, в то время как через perplexity данные запросы работали: 
+<img width="1148" height="356" alt="image" src="https://github.com/user-attachments/assets/16560fcc-5374-4f7b-925c-8217566eb09b" />
+
+ ________________________________________________________________________________________________________________________
+
+Вывод: 
+
+Была обнаружена и устранена уязвимость выведения вредоносного контента в контексе разговоров на отвлеченные темы: сериалы (книги, игры и т.д.), внесены изменения в системный пром и внедрен агент-критик при выводе итогового результата. Найдена интересная закономерность при тестировании.
+
+Это интересный кейс и максимально интересный опыт нового взаимодействия с нейросетями в сочетании с инструментами из области киербезопасности. Я понимаю, что это неполное выявление всех возможных уязвимостей, а также лишь частичное устранение возможных угроз. При этом я постарась сделать максимум за отведенные временные рамки. В дальнейшем возможно было бы попробовать не только до конца протестировать модель, но и:
+- рассмотреть разные варианты prompt-injection, надавив большим количеством разнообразных запросов или скрыв вредоносные инструкции на внешних данных, которые могла бы обработать модель;
+- рассмотреть разные дополнительные output-гарды, которые блокировали различный иной вредоносный контент, выводимый в иных случаях;
+- подключить LLAMATOR и провести его атаки и т.д.
+
+Благодарю за опыт и новые знания! 
+
+   
+
 
 
 
